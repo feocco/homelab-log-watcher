@@ -112,6 +112,29 @@ class ProcessorTests(TestCase):
 
 
 class NotificationButtonTests(TestCase):
+    def test_notification_title_and_message_fields(self) -> None:
+        fake_notifier = FakeNotifier()
+        notifier = HomelabNotifier(fake_notifier.notify)
+        matcher = LogMatcher(("ERROR",))
+        occurred_at = datetime(2026, 5, 3, 4, 12, 32, tzinfo=timezone.utc)
+        alert = matcher.match(
+            container_id="abc",
+            container_name="plant-monitor",
+            image="image",
+            line="ERROR request_id=1 failed",
+            occurred_at=occurred_at,
+        )
+        assert alert is not None
+
+        notifier.send(alert, suppressed_count=0, global_suppressed_count=0)
+
+        title = fake_notifier.calls[0][0][0]
+        message = fake_notifier.calls[0][0][1]
+        self.assertEqual(title, "log watcher - plant-monitor")
+        self.assertIn("Timestamp: 2026-05-03T04:12:32+00:00", message)
+        self.assertIn("Log level: ERROR", message)
+        self.assertIn("Message: ERROR request_id=1 failed", message)
+
     def test_suppression_buttons_are_uri_buttons_when_configured(self) -> None:
         fake_notifier = FakeNotifier()
         notifier = HomelabNotifier(

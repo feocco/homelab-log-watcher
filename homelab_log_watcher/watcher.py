@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import re
 import threading
@@ -88,10 +88,11 @@ class HomelabNotifier:
         self.mute_minutes = mute_minutes
 
     def send(self, alert: Alert, *, suppressed_count: int, global_suppressed_count: int) -> dict[str, Any]:
-        title = f"{alert.container_name} {alert.severity}"
+        title = f"log watcher - {alert.container_name}"
         details = [
-            truncate(alert.line, 700),
-            f"Image: {alert.image}",
+            f"Timestamp: {format_timestamp(alert.occurred_at)}",
+            f"Log level: {alert.severity}",
+            f"Message: {truncate(alert.line, 700)}",
             f"Fingerprint: {alert.fingerprint[:12]}",
         ]
         if suppressed_count:
@@ -310,6 +311,10 @@ def truncate(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
+
+
+def format_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def expected_stream_close(exc: Exception) -> bool:
