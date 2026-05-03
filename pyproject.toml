@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "homelab-log-watcher"
+version = "0.1.0"
+description = "Docker log stream watcher for homelab phone alerts."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "docker>=7.1,<8",
+  "homelab-functions @ https://github.com/feocco/homelab-functions/archive/refs/heads/main.zip",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+homelab-log-watcher = "homelab_log_watcher.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["homelab_log_watcher*"]
+
