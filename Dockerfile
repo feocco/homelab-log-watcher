@@ -1,5 +1,8 @@
 FROM python:3.13-alpine
 
+LABEL org.opencontainers.image.source="https://github.com/feocco/homelab-log-watcher"
+LABEL org.opencontainers.image.description="Docker log stream watcher for homelab phone alerts"
+
 WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
