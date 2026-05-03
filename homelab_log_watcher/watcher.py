@@ -283,8 +283,11 @@ class DockerLogWatcher:
                 if alert is None:
                     continue
                 self.processor.process(alert)
-        except Exception:
-            LOGGER.exception("Log stream ended unexpectedly for %s", name)
+        except Exception as exc:
+            if expected_stream_close(exc):
+                LOGGER.info("Log stream ended for stopped container %s: %s", name, exc)
+            else:
+                LOGGER.exception("Log stream ended unexpectedly for %s", name)
         finally:
             with self.lock:
                 self.threads.pop(container_id, None)
@@ -307,3 +310,13 @@ def truncate(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
+
+
+def expected_stream_close(exc: Exception) -> bool:
+    text = str(exc).lower()
+    expected_fragments = (
+        "dead or marked for removal",
+        "container is not running",
+        "no such container",
+    )
+    return any(fragment in text for fragment in expected_fragments)

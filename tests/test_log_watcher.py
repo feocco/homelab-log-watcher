@@ -9,7 +9,7 @@ from homelab_log_watcher.config import Config
 from homelab_log_watcher.fingerprint import normalize_line
 from homelab_log_watcher.server import parse_minutes
 from homelab_log_watcher.state import StateStore
-from homelab_log_watcher.watcher import AlertProcessor, HomelabNotifier, LogMatcher
+from homelab_log_watcher.watcher import AlertProcessor, HomelabNotifier, LogMatcher, expected_stream_close
 
 
 class FakeClock:
@@ -142,3 +142,7 @@ class ServerHelperTests(TestCase):
         self.assertEqual(parse_minutes(None, 60), 60)
         self.assertEqual(parse_minutes("bad", 60), 60)
         self.assertEqual(parse_minutes("-1", 60), 0)
+
+    def test_expected_stream_close_matches_container_removal(self) -> None:
+        self.assertTrue(expected_stream_close(RuntimeError("can not get logs from container which is dead or marked for removal")))
+        self.assertFalse(expected_stream_close(RuntimeError("connection reset by peer")))
