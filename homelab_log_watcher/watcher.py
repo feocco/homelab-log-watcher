@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import logging
 import re
 import threading
 import time
 from typing import Any, Callable, Iterable
+from urllib.error import URLError
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from .config import Config
 from .fingerprint import clean_line, fingerprint, normalize_line
@@ -77,6 +80,9 @@ class HomelabNotifier:
         action_base_url: str | None = None,
         action_token: str | None = None,
         mute_minutes: int = 60,
+        issue_snooze_minutes: int = 1440,
+        service_snooze_minutes: int = 720,
+        global_snooze_minutes: int = 720,
     ) -> None:
         if notify_func is None:
             import homelab
@@ -86,6 +92,9 @@ class HomelabNotifier:
         self.action_base_url = action_base_url.rstrip("/") if action_base_url else None
         self.action_token = action_token
         self.mute_minutes = mute_minutes
+        self.issue_snooze_minutes = issue_snooze_minutes
+        self.service_snooze_minutes = service_snooze_minutes
+        self.global_snooze_minutes = global_snooze_minutes
 
     def send(self, alert: Alert, *, suppressed_count: int, global_suppressed_count: int) -> dict[str, Any]:
         title = f"log watcher - {alert.container_name}"
@@ -115,18 +124,32 @@ class HomelabNotifier:
             return []
         return [
             {
-                "title": "Mute issue 1h",
+                "title": "Snooze issue 24h",
                 "action": "URI",
                 "uri": self._suppression_url(
                     scope="fingerprint",
                     container=alert.container_name,
                     fingerprint_value=alert.fingerprint,
+                    minutes=self.issue_snooze_minutes,
                 ),
             },
             {
-                "title": "Mute container 1h",
+                "title": "Snooze service 12h",
                 "action": "URI",
-                "uri": self._suppression_url(scope="container", container=alert.container_name),
+                "uri": self._suppression_url(
+                    scope="container",
+                    container=alert.container_name,
+                    minutes=self.service_snooze_minutes,
+                ),
+            },
+            {
+                "title": "Snooze all 12h",
+                "action": "URI",
+                "uri": self._suppression_url(
+                    scope="global",
+                    container=alert.container_name,
+                    minutes=self.global_snooze_minutes,
+                ),
             },
         ]
 
@@ -135,17 +158,67 @@ class HomelabNotifier:
         *,
         scope: str,
         container: str,
+        minutes: int,
         fingerprint_value: str | None = None,
     ) -> str:
         params = {
             "token": self.action_token or "",
             "scope": scope,
             "container": container,
-            "minutes": str(self.mute_minutes),
+            "minutes": str(minutes),
         }
         if fingerprint_value is not None:
             params["fingerprint"] = fingerprint_value
         return f"{self.action_base_url}/v1/suppress?{urlencode(params)}"
+
+
+class IncidentEmitter:
+    def __init__(
+        self,
+        *,
+        webhook_url: str | None,
+        token: str | None,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        self.webhook_url = webhook_url
+        self.token = token
+        self.timeout_seconds = timeout_seconds
+
+    def configured(self) -> bool:
+        return self.webhook_url is not None
+
+    def send(self, alert: Alert, *, detected_at: datetime) -> None:
+        if self.webhook_url is None:
+            return
+
+        body = json.dumps(
+            {
+                "version": 1,
+                "source": "homelab-log-watcher",
+                "detected_at": format_timestamp(detected_at),
+                "incident": {
+                    "container_id": alert.container_id,
+                    "container_name": alert.container_name,
+                    "image": alert.image,
+                    "severity": alert.severity,
+                    "matched_pattern": alert.matched_pattern,
+                    "line": truncate(alert.line, 2000),
+                    "normalized_line": alert.normalized_line,
+                    "fingerprint": alert.fingerprint,
+                    "occurred_at": format_timestamp(alert.occurred_at),
+                },
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = Request(self.webhook_url, data=body, headers=headers, method="POST")
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                response.read()
+        except URLError:
+            raise
 
 
 class AlertProcessor:
@@ -155,15 +228,19 @@ class AlertProcessor:
         config: Config,
         state: StateStore,
         notifier: HomelabNotifier,
+        incident_emitter: IncidentEmitter | None = None,
         now_func: Callable[[], datetime] = utc_now,
     ) -> None:
         self.config = config
         self.state = state
         self.notifier = notifier
+        self.incident_emitter = incident_emitter
         self.now_func = now_func
 
     def process(self, alert: Alert) -> bool:
         now = self.now_func()
+        self._emit_incident(alert, now)
+
         if self.state.is_suppressed(
             container_name=alert.container_name,
             fingerprint_value=alert.fingerprint,
@@ -204,6 +281,20 @@ class AlertProcessor:
         self.state.mark_sent(alert.fingerprint, now)
         LOGGER.info("Sent alert for %s fingerprint=%s", alert.container_name, alert.fingerprint[:12])
         return True
+
+    def _emit_incident(self, alert: Alert, now: datetime) -> None:
+        if self.incident_emitter is None or not self.incident_emitter.configured():
+            return
+        if not self.state.incident_allowed(alert.fingerprint, now, self.config.incident_cooldown_seconds):
+            LOGGER.debug("Suppressed incident webhook by cooldown: %s %s", alert.container_name, alert.fingerprint[:12])
+            return
+        try:
+            self.incident_emitter.send(alert, detected_at=now)
+        except Exception:
+            LOGGER.exception("Failed to send incident webhook")
+            return
+        self.state.mark_incident_sent(alert.fingerprint, now)
+        LOGGER.info("Sent incident webhook for %s fingerprint=%s", alert.container_name, alert.fingerprint[:12])
 
 
 class DockerLogWatcher:

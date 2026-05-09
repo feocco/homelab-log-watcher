@@ -11,8 +11,10 @@ patterns.
 
 - Matches `ERROR`, `WARN`, `WARNING`, `FATAL`, `PANIC`, `Traceback`, and
   `Exception`.
-- Suppresses repeated matching fingerprints for 1 hour.
-- Sends at most 3 phone notifications per 15 minutes globally.
+- Suppresses repeated matching fingerprints for 24 hours.
+- Sends at most 1 phone notification per hour globally.
+- Can emit structured incidents to a separate SRE service with its own
+  per-fingerprint cooldown.
 - Backfills only the last 30 seconds on startup.
 - Ignores the `homelab-log-watcher` container by default.
 
@@ -26,13 +28,19 @@ HOMELAB_FUNCTIONS_TOKEN=replace_me
 LOG_WATCHER_STATE_PATH=/app/state/log-watcher-state.json
 LOG_WATCHER_MATCH_PATTERNS=ERROR,WARN,WARNING,FATAL,PANIC,Traceback,Exception
 LOG_WATCHER_IGNORED_CONTAINERS=homelab-log-watcher
-LOG_WATCHER_FINGERPRINT_COOLDOWN_SECONDS=3600
-LOG_WATCHER_GLOBAL_WINDOW_SECONDS=900
-LOG_WATCHER_GLOBAL_MAX_NOTIFICATIONS=3
+LOG_WATCHER_FINGERPRINT_COOLDOWN_SECONDS=86400
+LOG_WATCHER_GLOBAL_WINDOW_SECONDS=3600
+LOG_WATCHER_GLOBAL_MAX_NOTIFICATIONS=1
+LOG_WATCHER_INCIDENT_COOLDOWN_SECONDS=86400
+LOG_WATCHER_INCIDENT_WEBHOOK_URL=http://nasfeo:8094/v1/incidents
+LOG_WATCHER_INCIDENT_WEBHOOK_TOKEN=replace_me
 LOG_WATCHER_STARTUP_BACKFILL_SECONDS=30
 LOG_WATCHER_PUBLIC_URL=http://nasfeo:8093
 LOG_WATCHER_ACTION_TOKEN=replace_me
-LOG_WATCHER_MUTE_MINUTES=60
+LOG_WATCHER_MUTE_MINUTES=720
+LOG_WATCHER_ISSUE_SNOOZE_MINUTES=1440
+LOG_WATCHER_SERVICE_SNOOZE_MINUTES=720
+LOG_WATCHER_GLOBAL_SNOOZE_MINUTES=720
 SERVICE_HOST=0.0.0.0
 SERVICE_PORT=8093
 LOG_LEVEL=INFO
@@ -46,8 +54,9 @@ The watcher stores cooldown state and manual suppressions in
 When `LOG_WATCHER_PUBLIC_URL` and `LOG_WATCHER_ACTION_TOKEN` are configured,
 alerts include Home Assistant mobile URI buttons:
 
-- `Mute issue 1h`
-- `Mute container 1h`
+- `Snooze issue 24h`
+- `Snooze service 12h`
+- `Snooze all 12h`
 
 The button opens the watcher suppression endpoint and writes a temporary rule to
 the state file. The token in the button URL is separate from the
@@ -59,6 +68,10 @@ Manual suppressions can also be added to the state file:
 {
   "suppressions": [
     {
+      "scope": "global",
+      "expires_at": "2026-05-04T00:00:00+00:00"
+    },
+    {
       "scope": "container",
       "container": "plant-monitor",
       "expires_at": "2026-05-04T00:00:00+00:00"
@@ -69,6 +82,35 @@ Manual suppressions can also be added to the state file:
       "expires_at": null
     }
   ]
+}
+```
+
+## Incident Webhook
+
+When `LOG_WATCHER_INCIDENT_WEBHOOK_URL` is configured, each matching log line
+can also emit a structured incident payload. This is intentionally separate
+from phone notification suppression: snoozing phone alerts does not block the
+SRE incident path. Incident delivery has its own per-fingerprint cooldown via
+`LOG_WATCHER_INCIDENT_COOLDOWN_SECONDS`.
+
+Payload shape:
+
+```json
+{
+  "version": 1,
+  "source": "homelab-log-watcher",
+  "detected_at": "2026-05-09T04:12:32+00:00",
+  "incident": {
+    "container_id": "abc123",
+    "container_name": "plant-monitor",
+    "image": "ghcr.io/feocco/plant-monitor:latest",
+    "severity": "ERROR",
+    "matched_pattern": "ERROR",
+    "line": "ERROR failed to call Home Assistant",
+    "normalized_line": "ERROR failed to call Home Assistant",
+    "fingerprint": "abcdef123456...",
+    "occurred_at": "2026-05-09T04:12:32+00:00"
+  }
 }
 ```
 

@@ -9,7 +9,7 @@ import docker
 from .config import Config
 from .server import SuppressionServer
 from .state import StateStore
-from .watcher import AlertProcessor, DockerLogWatcher, HomelabNotifier, LogMatcher
+from .watcher import AlertProcessor, DockerLogWatcher, HomelabNotifier, IncidentEmitter, LogMatcher
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -28,8 +28,15 @@ def main(argv: list[str] | None = None) -> int:
         action_base_url=config.public_url,
         action_token=config.action_token,
         mute_minutes=config.mute_minutes,
+        issue_snooze_minutes=config.issue_snooze_minutes,
+        service_snooze_minutes=config.service_snooze_minutes,
+        global_snooze_minutes=config.global_snooze_minutes,
     )
-    processor = AlertProcessor(config=config, state=state, notifier=notifier)
+    incident_emitter = IncidentEmitter(
+        webhook_url=config.incident_webhook_url,
+        token=config.incident_webhook_token,
+    )
+    processor = AlertProcessor(config=config, state=state, notifier=notifier, incident_emitter=incident_emitter)
     SuppressionServer(config=config, state=state).start()
     client = docker.from_env()
     watcher = DockerLogWatcher(

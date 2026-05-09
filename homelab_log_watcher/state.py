@@ -64,6 +64,7 @@ class StateStore:
             return self._empty()
         payload.setdefault("version", 1)
         payload.setdefault("fingerprints", {})
+        payload.setdefault("incident_sent_at", {})
         payload.setdefault("global_sent_at", [])
         payload.setdefault("global_suppressed_count", 0)
         payload.setdefault("suppressions", [])
@@ -73,6 +74,7 @@ class StateStore:
         return {
             "version": 1,
             "fingerprints": {},
+            "incident_sent_at": {},
             "global_sent_at": [],
             "global_suppressed_count": 0,
             "suppressions": [],
@@ -116,6 +118,8 @@ class StateStore:
         now: datetime,
     ) -> bool:
         for suppression in self.suppressions(now):
+            if suppression.scope == "global":
+                return True
             if suppression.scope == "container" and suppression.container == container_name:
                 return True
             if suppression.scope == "fingerprint" and suppression.fingerprint == fingerprint_value:
@@ -144,6 +148,17 @@ class StateStore:
             self.save()
             return False, int(self.data["global_suppressed_count"])
         return True, int(self.data.get("global_suppressed_count") or 0)
+
+    def incident_allowed(self, fingerprint_value: str, now: datetime, cooldown_seconds: int) -> bool:
+        records = self.data.setdefault("incident_sent_at", {})
+        last_sent = parse_dt(records.get(fingerprint_value))
+        if last_sent is not None and now - last_sent < timedelta(seconds=cooldown_seconds):
+            return False
+        return True
+
+    def mark_incident_sent(self, fingerprint_value: str, now: datetime) -> None:
+        self.data.setdefault("incident_sent_at", {})[fingerprint_value] = format_dt(now)
+        self.save()
 
     def mark_sent(self, fingerprint_value: str, now: datetime) -> tuple[int, int]:
         records = self.data.setdefault("fingerprints", {})

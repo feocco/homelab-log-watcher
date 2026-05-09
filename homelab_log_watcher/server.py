@@ -70,7 +70,7 @@ class SuppressionServer:
                 if scope == "pattern" and not pattern:
                     write_json(self, HTTPStatus.BAD_REQUEST, {"error": "pattern is required"})
                     return
-                if scope not in {"container", "fingerprint", "pattern"}:
+                if scope not in {"container", "fingerprint", "global", "pattern"}:
                     write_json(self, HTTPStatus.BAD_REQUEST, {"error": "unsupported scope"})
                     return
 

@@ -32,18 +32,35 @@ class FakeNotifier:
         return {"ok": True}
 
 
+class FakeIncidentEmitter:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def configured(self) -> bool:
+        return True
+
+    def send(self, alert, *, detected_at):
+        self.calls.append((alert, detected_at))
+
+
 def make_config(path: Path) -> Config:
     return Config(
         state_path=path,
         match_patterns=("ERROR", "WARN"),
         ignored_containers=("homelab-log-watcher",),
-        fingerprint_cooldown_seconds=3600,
-        global_window_seconds=900,
-        global_max_notifications=2,
+        fingerprint_cooldown_seconds=86400,
+        global_window_seconds=3600,
+        global_max_notifications=1,
+        incident_cooldown_seconds=86400,
+        incident_webhook_url=None,
+        incident_webhook_token=None,
         startup_backfill_seconds=30,
         public_url=None,
         action_token=None,
-        mute_minutes=60,
+        mute_minutes=720,
+        issue_snooze_minutes=1440,
+        service_snooze_minutes=720,
+        global_snooze_minutes=720,
         service_host="127.0.0.1",
         service_port=8093,
         log_level="INFO",
@@ -89,7 +106,7 @@ class ProcessorTests(TestCase):
         self.assertFalse(processor.process(alert))
         self.assertEqual(len(fake_notifier.calls), 1)
 
-        clock.advance(3601)
+        clock.advance(86401)
         self.assertTrue(processor.process(alert))
         self.assertEqual(len(fake_notifier.calls), 2)
         self.assertIn("Suppressed repeats: 1", fake_notifier.calls[-1][0][1])
@@ -108,7 +125,44 @@ class ProcessorTests(TestCase):
             assert alert is not None
             processor.process(alert)
 
-        self.assertEqual(len(fake_notifier.calls), 2)
+        self.assertEqual(len(fake_notifier.calls), 1)
+
+    def test_global_manual_snooze_suppresses_phone_notifications(self) -> None:
+        tmp, clock, fake_notifier, processor, matcher = self.make_processor()
+        self.addCleanup(tmp.cleanup)
+        processor.state.add_suppression(scope="global", now=clock.now(), minutes=720)
+
+        alert = matcher.match(
+            container_id="abc",
+            container_name="plant-monitor",
+            image="image",
+            line="ERROR request_id=1 failed to call Home Assistant",
+        )
+        assert alert is not None
+
+        self.assertFalse(processor.process(alert))
+        self.assertEqual(len(fake_notifier.calls), 0)
+
+    def test_incident_webhook_is_not_blocked_by_phone_snooze(self) -> None:
+        tmp, clock, fake_notifier, processor, matcher = self.make_processor()
+        self.addCleanup(tmp.cleanup)
+        fake_incidents = FakeIncidentEmitter()
+        processor.incident_emitter = fake_incidents
+        processor.state.add_suppression(scope="global", now=clock.now(), minutes=720)
+
+        alert = matcher.match(
+            container_id="abc",
+            container_name="plant-monitor",
+            image="image",
+            line="ERROR request_id=1 failed to call Home Assistant",
+        )
+        assert alert is not None
+
+        self.assertFalse(processor.process(alert))
+        self.assertEqual(len(fake_notifier.calls), 0)
+        self.assertEqual(len(fake_incidents.calls), 1)
+        self.assertFalse(processor.process(alert))
+        self.assertEqual(len(fake_incidents.calls), 1)
 
 
 class NotificationButtonTests(TestCase):
@@ -141,7 +195,10 @@ class NotificationButtonTests(TestCase):
             fake_notifier.notify,
             action_base_url="http://nasfeo:8093/",
             action_token="secret",
-            mute_minutes=60,
+            mute_minutes=720,
+            issue_snooze_minutes=1440,
+            service_snooze_minutes=720,
+            global_snooze_minutes=720,
         )
         matcher = LogMatcher(("ERROR",))
         alert = matcher.match(
@@ -156,8 +213,14 @@ class NotificationButtonTests(TestCase):
 
         buttons = fake_notifier.calls[0][1]["buttons"]
         self.assertEqual(buttons[0]["action"], "URI")
+        self.assertEqual(buttons[0]["title"], "Snooze issue 24h")
         self.assertIn("scope=fingerprint", buttons[0]["uri"])
+        self.assertIn("minutes=1440", buttons[0]["uri"])
+        self.assertEqual(buttons[1]["title"], "Snooze service 12h")
         self.assertIn("scope=container", buttons[1]["uri"])
+        self.assertIn("minutes=720", buttons[1]["uri"])
+        self.assertEqual(buttons[2]["title"], "Snooze all 12h")
+        self.assertIn("scope=global", buttons[2]["uri"])
 
 
 class ServerHelperTests(TestCase):
