@@ -43,7 +43,7 @@ class FakeIncidentEmitter:
         self.calls.append((alert, detected_at))
 
 
-def make_config(path: Path) -> Config:
+def make_config(path: Path, *, phone_notifications_enabled: bool = True) -> Config:
     return Config(
         state_path=path,
         match_patterns=("ERROR", "WARN"),
@@ -51,6 +51,7 @@ def make_config(path: Path) -> Config:
         fingerprint_cooldown_seconds=86400,
         global_window_seconds=3600,
         global_max_notifications=1,
+        phone_notifications_enabled=phone_notifications_enabled,
         incident_cooldown_seconds=86400,
         incident_webhook_url=None,
         incident_webhook_token=None,
@@ -162,6 +163,33 @@ class ProcessorTests(TestCase):
         self.assertEqual(len(fake_notifier.calls), 0)
         self.assertEqual(len(fake_incidents.calls), 1)
         self.assertFalse(processor.process(alert))
+        self.assertEqual(len(fake_incidents.calls), 1)
+
+    def test_phone_notifications_can_be_disabled_without_blocking_incidents(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        state_path = Path(tmp.name) / "state.json"
+        clock = FakeClock()
+        fake_notifier = FakeNotifier()
+        fake_incidents = FakeIncidentEmitter()
+        processor = AlertProcessor(
+            config=make_config(state_path, phone_notifications_enabled=False),
+            state=StateStore(state_path),
+            notifier=HomelabNotifier(fake_notifier.notify),
+            incident_emitter=fake_incidents,
+            now_func=clock.now,
+        )
+        matcher = LogMatcher(("ERROR",))
+        alert = matcher.match(
+            container_id="abc",
+            container_name="plant-monitor",
+            image="image",
+            line="ERROR request_id=1 failed to call Home Assistant",
+        )
+        assert alert is not None
+
+        self.assertFalse(processor.process(alert))
+        self.assertEqual(fake_notifier.calls, [])
         self.assertEqual(len(fake_incidents.calls), 1)
 
 

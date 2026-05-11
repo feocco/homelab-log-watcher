@@ -241,6 +241,10 @@ class AlertProcessor:
         now = self.now_func()
         self._emit_incident(alert, now)
 
+        if not self.config.phone_notifications_enabled:
+            LOGGER.debug("Phone notifications disabled: %s %s", alert.container_name, alert.fingerprint[:12])
+            return False
+
         if self.state.is_suppressed(
             container_name=alert.container_name,
             fingerprint_value=alert.fingerprint,

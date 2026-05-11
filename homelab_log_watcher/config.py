@@ -16,6 +16,7 @@ class Config:
     fingerprint_cooldown_seconds: int
     global_window_seconds: int
     global_max_notifications: int
+    phone_notifications_enabled: bool
     incident_cooldown_seconds: int
     incident_webhook_url: str | None
     incident_webhook_token: str | None
@@ -39,6 +40,7 @@ class Config:
             fingerprint_cooldown_seconds=parse_int("LOG_WATCHER_FINGERPRINT_COOLDOWN_SECONDS", 86400),
             global_window_seconds=parse_int("LOG_WATCHER_GLOBAL_WINDOW_SECONDS", 3600),
             global_max_notifications=parse_int("LOG_WATCHER_GLOBAL_MAX_NOTIFICATIONS", 1),
+            phone_notifications_enabled=parse_bool(os.environ.get("LOG_WATCHER_PHONE_NOTIFICATIONS_ENABLED"), True),
             incident_cooldown_seconds=parse_int("LOG_WATCHER_INCIDENT_COOLDOWN_SECONDS", 86400),
             incident_webhook_url=parse_optional_str(os.environ.get("LOG_WATCHER_INCIDENT_WEBHOOK_URL")),
             incident_webhook_token=parse_optional_str(os.environ.get("LOG_WATCHER_INCIDENT_WEBHOOK_TOKEN")),
@@ -69,6 +71,12 @@ def parse_int(name: str, default: int) -> int:
     if parsed < 0:
         raise ValueError(f"{name} must be >= 0")
     return parsed
+
+
+def parse_bool(value: str | None, default: bool) -> bool:
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def parse_optional_str(value: str | None) -> str | None:

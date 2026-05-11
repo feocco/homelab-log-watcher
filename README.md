@@ -13,6 +13,7 @@ patterns.
   `Exception`.
 - Suppresses repeated matching fingerprints for 24 hours.
 - Sends at most 1 phone notification per hour globally.
+- Can disable phone notifications while still forwarding incidents.
 - Can emit structured incidents to a separate SRE service with its own
   per-fingerprint cooldown.
 - Backfills only the last 30 seconds on startup.
@@ -31,6 +32,7 @@ LOG_WATCHER_IGNORED_CONTAINERS=homelab-log-watcher
 LOG_WATCHER_FINGERPRINT_COOLDOWN_SECONDS=86400
 LOG_WATCHER_GLOBAL_WINDOW_SECONDS=3600
 LOG_WATCHER_GLOBAL_MAX_NOTIFICATIONS=1
+LOG_WATCHER_PHONE_NOTIFICATIONS_ENABLED=true
 LOG_WATCHER_INCIDENT_COOLDOWN_SECONDS=86400
 LOG_WATCHER_INCIDENT_WEBHOOK_URL=http://nasfeo:8094/v1/incidents
 LOG_WATCHER_INCIDENT_WEBHOOK_TOKEN=replace_me
@@ -48,6 +50,10 @@ LOG_LEVEL=INFO
 
 The watcher stores cooldown state and manual suppressions in
 `LOG_WATCHER_STATE_PATH`.
+
+Set `LOG_WATCHER_PHONE_NOTIFICATIONS_ENABLED=false` when another service, such
+as `homelab-sre-agent`, owns phone notifications. Incident webhook delivery
+still runs when phone notifications are disabled.
 
 ## Suppression
 
