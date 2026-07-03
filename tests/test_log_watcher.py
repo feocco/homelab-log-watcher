@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import tempfile
 from unittest import TestCase
+from urllib.request import urlopen
 
 from homelab_log_watcher.config import Config
 from homelab_log_watcher.fingerprint import normalize_line
-from homelab_log_watcher.server import parse_minutes
+from homelab_log_watcher.server import SuppressionServer, parse_minutes
 from homelab_log_watcher.state import StateStore
 from homelab_log_watcher.watcher import AlertProcessor, HomelabNotifier, LogMatcher, expected_stream_close
 
@@ -260,3 +262,74 @@ class ServerHelperTests(TestCase):
     def test_expected_stream_close_matches_container_removal(self) -> None:
         self.assertTrue(expected_stream_close(RuntimeError("can not get logs from container which is dead or marked for removal")))
         self.assertFalse(expected_stream_close(RuntimeError("connection reset by peer")))
+
+
+class ServerEndpointTests(TestCase):
+    def stop_server(self, server: SuppressionServer) -> None:
+        assert server.httpd is not None
+        assert server.thread is not None
+        server.httpd.shutdown()
+        server.httpd.server_close()
+        server.thread.join()
+
+    def start_server(self) -> tuple[tempfile.TemporaryDirectory[str], SuppressionServer, str]:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        state_path = Path(tmp.name) / "state.json"
+        server = SuppressionServer(
+            config=Config(
+                state_path=state_path,
+                match_patterns=("ERROR", "WARN"),
+                ignored_containers=("homelab-log-watcher",),
+                fingerprint_cooldown_seconds=86400,
+                global_window_seconds=3600,
+                global_max_notifications=1,
+                phone_notifications_enabled=True,
+                incident_cooldown_seconds=86400,
+                incident_webhook_url=None,
+                incident_webhook_token=None,
+                startup_backfill_seconds=30,
+                public_url="http://127.0.0.1",
+                action_token="secret",
+                mute_minutes=720,
+                issue_snooze_minutes=1440,
+                service_snooze_minutes=720,
+                global_snooze_minutes=720,
+                service_host="127.0.0.1",
+                service_port=0,
+                log_level="INFO",
+            ),
+            state=StateStore(state_path),
+        )
+        server.start()
+        assert server.httpd is not None
+        assert server.thread is not None
+        self.addCleanup(self.stop_server, server)
+        return tmp, server, f"http://127.0.0.1:{server.httpd.server_address[1]}"
+
+    def test_docs_endpoint_returns_html_summary(self) -> None:
+        _tmp, _server, base_url = self.start_server()
+
+        with urlopen(f"{base_url}/docs") as response:
+            body = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.get_content_type(), "text/html")
+
+        self.assertIn("homelab-log-watcher", body)
+        self.assertIn("/health", body)
+        self.assertIn("/openapi.json", body)
+        self.assertIn("/v1/suppress", body)
+
+    def test_openapi_endpoint_returns_service_schema(self) -> None:
+        _tmp, _server, base_url = self.start_server()
+
+        with urlopen(f"{base_url}/openapi.json") as response:
+            body = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.get_content_type(), "application/json")
+
+        self.assertEqual(body["openapi"], "3.1.0")
+        self.assertEqual(body["paths"]["/health"]["get"]["responses"]["200"]["description"], "Service health")
+        self.assertEqual(body["paths"]["/docs"]["get"]["responses"]["200"]["description"], "Service documentation")
+        self.assertEqual(body["paths"]["/v1/suppress"]["get"]["security"], [{"ActionToken": []}])
+        self.assertEqual(body["components"]["securitySchemes"]["ActionToken"]["type"], "apiKey")

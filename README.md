@@ -7,6 +7,12 @@ new container start events, and sends Joe a phone notification through
 `homelab.notify_joe(...)` when a line matches the configured warning/error
 patterns.
 
+The HTTP server exposes:
+
+- `/health` for health checks
+- `/docs` for browser-friendly service docs
+- `/openapi.json` for the OpenAPI 3.1 schema
+
 ## Defaults
 
 - Matches `ERROR`, `WARN`, `WARNING`, `FATAL`, `PANIC`, `Traceback`, and
@@ -133,4 +139,11 @@ Health check:
 
 ```bash
 curl http://localhost:8093/health
+```
+
+Docs and schema:
+
+```bash
+open http://localhost:8093/docs
+curl http://localhost:8093/openapi.json
 ```
